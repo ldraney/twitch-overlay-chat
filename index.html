@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Twitch Chat Overlay</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: transparent;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      font-size: 16px;
+      overflow: hidden;
+    }
+
+    #chat-container {
+      position: fixed;
+      bottom: 20px;
+      left: 20px;
+      right: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 100vh;
+      overflow: hidden;
+    }
+
+    .chat-message {
+      padding: 8px 12px;
+      background: rgba(0, 0, 0, 0.4);
+      border-radius: 6px;
+      color: white;
+      text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+      animation: fadeIn 0.3s ease-out, fadeOut 0.5s ease-in 9.5s forwards;
+      word-wrap: break-word;
+    }
+
+    .chat-message .username {
+      font-weight: bold;
+      margin-right: 8px;
+    }
+
+    .chat-message .text {
+      color: #f0f0f0;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes fadeOut {
+      from {
+        opacity: 1;
+      }
+      to {
+        opacity: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="chat-container"></div>
+
+  <script>
+    const CHANNEL = 'devopsphilosopher';
+    const MAX_MESSAGES = 10;
+    const MESSAGE_DURATION = 10000;
+
+    const chatContainer = document.getElementById('chat-container');
+
+    // Connect directly to Twitch IRC via WebSocket (no external library needed)
+    const ws = new WebSocket('wss://irc-ws.chat.twitch.tv:443');
+
+    ws.onopen = () => {
+      console.log('WebSocket connected, joining channel...');
+      // Anonymous login
+      ws.send('CAP REQ :twitch.tv/tags twitch.tv/commands');
+      ws.send('PASS SCHMOOPIIE');
+      ws.send('NICK justinfan' + Math.floor(Math.random() * 100000));
+      ws.send('JOIN #' + CHANNEL);
+    };
+
+    ws.onmessage = (event) => {
+      const lines = event.data.split('\r\n');
+
+      for (const line of lines) {
+        if (!line) continue;
+
+        // Respond to PING to stay connected
+        if (line.startsWith('PING')) {
+          ws.send('PONG :tmi.twitch.tv');
+          continue;
+        }
+
+        // Parse PRIVMSG (chat messages)
+        if (line.includes('PRIVMSG')) {
+          const parsed = parseMessage(line);
+          if (parsed) {
+            addMessage(parsed.username, parsed.message, parsed.color);
+          }
+        }
+      }
+    };
+
+    ws.onclose = () => {
+      console.log('WebSocket closed, reconnecting in 3s...');
+      setTimeout(() => location.reload(), 3000);
+    };
+
+    ws.onerror = (err) => {
+      console.error('WebSocket error:', err);
+    };
+
+    function parseMessage(raw) {
+      try {
+        // Parse IRCv3 tags
+        let tags = {};
+        let rest = raw;
+
+        if (raw.startsWith('@')) {
+          const tagEnd = raw.indexOf(' ');
+          const tagStr = raw.substring(1, tagEnd);
+          rest = raw.substring(tagEnd + 1);
+
+          tagStr.split(';').forEach(tag => {
+            const [key, value] = tag.split('=');
+            tags[key] = value || '';
+          });
+        }
+
+        // Parse PRIVMSG
+        const privmsgMatch = rest.match(/:(\w+)!\w+@\w+\.tmi\.twitch\.tv PRIVMSG #\w+ :(.+)/);
+        if (privmsgMatch) {
+          return {
+            username: tags['display-name'] || privmsgMatch[1],
+            message: privmsgMatch[2],
+            color: tags['color'] || null
+          };
+        }
+      } catch (e) {
+        console.error('Parse error:', e);
+      }
+      return null;
+    }
+
+    function addMessage(username, text, color) {
+      const messageEl = document.createElement('div');
+      messageEl.className = 'chat-message';
+
+      const usernameEl = document.createElement('span');
+      usernameEl.className = 'username';
+      usernameEl.textContent = username + ':';
+      if (color) {
+        usernameEl.style.color = color;
+      }
+
+      const textEl = document.createElement('span');
+      textEl.className = 'text';
+      textEl.textContent = text;
+
+      messageEl.appendChild(usernameEl);
+      messageEl.appendChild(textEl);
+      chatContainer.appendChild(messageEl);
+
+      while (chatContainer.children.length > MAX_MESSAGES) {
+        chatContainer.removeChild(chatContainer.firstChild);
+      }
+
+      setTimeout(() => {
+        if (messageEl.parentNode) {
+          messageEl.remove();
+        }
+      }, MESSAGE_DURATION);
+    }
+  </script>
+</body>
+</html>
