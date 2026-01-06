@@ -49,6 +49,12 @@
       color: #f0f0f0;
     }
 
+    .chat-message .emote {
+      height: 1.5em;
+      vertical-align: middle;
+      margin: 0 2px;
+    }
+
     @keyframes fadeIn {
       from {
         opacity: 0;
@@ -99,7 +105,7 @@
         if (line.includes('PRIVMSG')) {
           const parsed = parseMessage(line);
           if (parsed) {
-            addMessage(parsed.username, parsed.message, parsed.color);
+            addMessage(parsed.username, parsed.message, parsed.color, parsed.emotes);
           }
         }
       }
@@ -137,7 +143,8 @@
           return {
             username: tags['display-name'] || privmsgMatch[1],
             message: privmsgMatch[2],
-            color: tags['color'] || null
+            color: tags['color'] || null,
+            emotes: tags['emotes'] || ''
           };
         }
       } catch (e) {
@@ -146,7 +153,46 @@
       return null;
     }
 
-    function addMessage(username, text, color) {
+    // Parse emotes tag and return array of {id, start, end}
+    function parseEmotes(emotesStr) {
+      if (!emotesStr) return [];
+      const emotes = [];
+      // Format: emote_id:start-end,start-end/emote_id:start-end
+      emotesStr.split('/').forEach(part => {
+        const [id, positions] = part.split(':');
+        if (positions) {
+          positions.split(',').forEach(pos => {
+            const [start, end] = pos.split('-').map(Number);
+            emotes.push({ id, start, end });
+          });
+        }
+      });
+      // Sort by start position descending (replace from end to preserve positions)
+      return emotes.sort((a, b) => b.start - a.start);
+    }
+
+    // Convert message text to HTML with emotes as images
+    function formatMessageWithEmotes(text, emotesStr) {
+      const emotes = parseEmotes(emotesStr);
+      let result = text;
+
+      // Replace each emote with img tag (from end to start to preserve positions)
+      emotes.forEach(({ id, start, end }) => {
+        const emoteUrl = `https://static-cdn.jtvnw.net/emoticons/v2/${id}/default/dark/2.0`;
+        const emoteImg = `<img class="emote" src="${emoteUrl}" alt="emote">`;
+        result = result.slice(0, start) + emoteImg + result.slice(end + 1);
+      });
+
+      // Escape any remaining HTML in text parts (but preserve our img tags)
+      // Split by img tags, escape text parts, rejoin
+      const parts = result.split(/(<img[^>]+>)/);
+      return parts.map(part => {
+        if (part.startsWith('<img')) return part;
+        return part.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      }).join('');
+    }
+
+    function addMessage(username, text, color, emotes) {
       const messageEl = document.createElement('div');
       messageEl.className = 'chat-message';
 
@@ -159,7 +205,7 @@
 
       const textEl = document.createElement('span');
       textEl.className = 'text';
-      textEl.textContent = text;
+      textEl.innerHTML = formatMessageWithEmotes(text, emotes);
 
       messageEl.appendChild(usernameEl);
       messageEl.appendChild(textEl);
