@@ -73,9 +73,72 @@
 
   <script>
     const CHANNEL = 'devopsphilosopher';
+    const TWITCH_USER_ID = '405924087'; // devopsphilosopher's Twitch ID
     const MAX_MESSAGES = 10;
 
     const chatContainer = document.getElementById('chat-container');
+
+    // Third-party emote maps: name -> url
+    const bttvEmotes = new Map();
+    const sevenTVEmotes = new Map();
+
+    // Load BTTV emotes (global + channel)
+    async function loadBTTVEmotes() {
+      try {
+        // Global emotes
+        const globalRes = await fetch('https://api.betterttv.net/3/cached/emotes/global');
+        const globalEmotes = await globalRes.json();
+        globalEmotes.forEach(e => {
+          bttvEmotes.set(e.code, `https://cdn.betterttv.net/emote/${e.id}/2x`);
+        });
+
+        // Channel emotes
+        const channelRes = await fetch(`https://api.betterttv.net/3/cached/users/twitch/${TWITCH_USER_ID}`);
+        if (channelRes.ok) {
+          const channelData = await channelRes.json();
+          [...(channelData.channelEmotes || []), ...(channelData.sharedEmotes || [])].forEach(e => {
+            bttvEmotes.set(e.code, `https://cdn.betterttv.net/emote/${e.id}/2x`);
+          });
+        }
+        console.log(`Loaded ${bttvEmotes.size} BTTV emotes`);
+      } catch (e) {
+        console.error('Failed to load BTTV emotes:', e);
+      }
+    }
+
+    // Load 7TV emotes (global + channel)
+    async function load7TVEmotes() {
+      try {
+        // Global emotes
+        const globalRes = await fetch('https://7tv.io/v3/emote-sets/global');
+        const globalData = await globalRes.json();
+        (globalData.emotes || []).forEach(e => {
+          const file = e.data?.host?.files?.find(f => f.name === '2x.webp') || e.data?.host?.files?.[0];
+          if (file && e.data?.host?.url) {
+            sevenTVEmotes.set(e.name, `https:${e.data.host.url}/${file.name}`);
+          }
+        });
+
+        // Channel emotes
+        const channelRes = await fetch(`https://7tv.io/v3/users/twitch/${TWITCH_USER_ID}`);
+        if (channelRes.ok) {
+          const channelData = await channelRes.json();
+          (channelData.emote_set?.emotes || []).forEach(e => {
+            const file = e.data?.host?.files?.find(f => f.name === '2x.webp') || e.data?.host?.files?.[0];
+            if (file && e.data?.host?.url) {
+              sevenTVEmotes.set(e.name, `https:${e.data.host.url}/${file.name}`);
+            }
+          });
+        }
+        console.log(`Loaded ${sevenTVEmotes.size} 7TV emotes`);
+      } catch (e) {
+        console.error('Failed to load 7TV emotes:', e);
+      }
+    }
+
+    // Load third-party emotes on startup
+    loadBTTVEmotes();
+    load7TVEmotes();
 
     // Connect directly to Twitch IRC via WebSocket (no external library needed)
     const ws = new WebSocket('wss://irc-ws.chat.twitch.tv:443');
@@ -176,19 +239,37 @@
       const emotes = parseEmotes(emotesStr);
       let result = text;
 
-      // Replace each emote with img tag (from end to start to preserve positions)
+      // Replace Twitch emotes first (from end to start to preserve positions)
       emotes.forEach(({ id, start, end }) => {
         const emoteUrl = `https://static-cdn.jtvnw.net/emoticons/v2/${id}/default/dark/2.0`;
         const emoteImg = `<img class="emote" src="${emoteUrl}" alt="emote">`;
         result = result.slice(0, start) + emoteImg + result.slice(end + 1);
       });
 
-      // Escape any remaining HTML in text parts (but preserve our img tags)
-      // Split by img tags, escape text parts, rejoin
+      // Split by img tags, process text parts for 7TV/BTTV, rejoin
       const parts = result.split(/(<img[^>]+>)/);
       return parts.map(part => {
         if (part.startsWith('<img')) return part;
-        return part.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        // Escape HTML first
+        let escaped = part.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        // Replace 7TV and BTTV emotes in text parts
+        return replaceThirdPartyEmotes(escaped);
+      }).join('');
+    }
+
+    // Replace 7TV and BTTV emotes in text
+    function replaceThirdPartyEmotes(text) {
+      // Split by whitespace but keep separators
+      const tokens = text.split(/(\s+)/);
+      return tokens.map(token => {
+        // Check 7TV first, then BTTV
+        if (sevenTVEmotes.has(token)) {
+          return `<img class="emote" src="${sevenTVEmotes.get(token)}" alt="${token}">`;
+        }
+        if (bttvEmotes.has(token)) {
+          return `<img class="emote" src="${bttvEmotes.get(token)}" alt="${token}">`;
+        }
+        return token;
       }).join('');
     }
 
