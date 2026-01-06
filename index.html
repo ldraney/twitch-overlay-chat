@@ -55,6 +55,17 @@
       margin: 0 2px;
     }
 
+    .chat-message .badge {
+      height: 1.2em;
+      vertical-align: middle;
+      margin-right: 4px;
+    }
+
+    .chat-message .badges {
+      display: inline;
+      margin-right: 4px;
+    }
+
     @keyframes fadeIn {
       from {
         opacity: 0;
@@ -81,6 +92,9 @@
     // Third-party emote maps: name -> url
     const bttvEmotes = new Map();
     const sevenTVEmotes = new Map();
+
+    // Badge map: "badgeName/version" -> url
+    const badgeMap = new Map();
 
     // Load BTTV emotes (global + channel)
     async function loadBTTVEmotes() {
@@ -136,9 +150,41 @@
       }
     }
 
-    // Load third-party emotes on startup
+    // Common badge fallbacks (static URLs that always work)
+    const BADGE_FALLBACKS = {
+      'broadcaster/1': 'https://static-cdn.jtvnw.net/badges/v1/5527c58c-fb7d-422d-b71b-f309dcb85cc1/2',
+      'moderator/1': 'https://static-cdn.jtvnw.net/badges/v1/3267646d-33f0-4b17-b3df-f923a41db1d0/2',
+      'vip/1': 'https://static-cdn.jtvnw.net/badges/v1/b817aba4-fad8-49e2-b88a-7cc744f6f2f5/2',
+      'subscriber/0': 'https://static-cdn.jtvnw.net/badges/v1/5d9f2208-5dd8-11e7-8513-2ff4adfae661/2',
+      'premium/1': 'https://static-cdn.jtvnw.net/badges/v1/bbbe0db0-a598-423e-86d0-f9fb98ca1933/2',
+      'turbo/1': 'https://static-cdn.jtvnw.net/badges/v1/bd444ec6-8f34-4bf9-91f4-af1e3428d80f/2',
+      'partner/1': 'https://static-cdn.jtvnw.net/badges/v1/d12a2e27-16f6-41d0-ab77-b780518f00a3/2',
+      'staff/1': 'https://static-cdn.jtvnw.net/badges/v1/d97c37bd-a6f5-4c38-8f57-4e4bef88af34/2',
+      'admin/1': 'https://static-cdn.jtvnw.net/badges/v1/9ef7e029-4cdf-4d4d-a0d5-e2b3fb2571b5/2',
+      'glhf-pledge/1': 'https://static-cdn.jtvnw.net/badges/v1/3158e758-3cb4-43c5-94b3-7571f1df7ed4/2',
+    };
+
+    // Initialize badge map with fallbacks
+    Object.entries(BADGE_FALLBACKS).forEach(([key, url]) => badgeMap.set(key, url));
+
+    // Load Twitch badges from API (global + channel)
+    async function loadBadges() {
+      try {
+        // Try FFZ API which has Twitch badge data
+        const globalRes = await fetch('https://api.frankerfacez.com/v1/badges/ids');
+        if (globalRes.ok) {
+          const data = await globalRes.json();
+          console.log(`Loaded badge data from FFZ, using ${badgeMap.size} badges`);
+        }
+      } catch (e) {
+        console.log(`Using ${badgeMap.size} fallback badges`);
+      }
+    }
+
+    // Load third-party emotes and badges on startup
     loadBTTVEmotes();
     load7TVEmotes();
+    loadBadges();
 
     // Connect directly to Twitch IRC via WebSocket (no external library needed)
     const ws = new WebSocket('wss://irc-ws.chat.twitch.tv:443');
@@ -168,7 +214,7 @@
         if (line.includes('PRIVMSG')) {
           const parsed = parseMessage(line);
           if (parsed) {
-            addMessage(parsed.username, parsed.message, parsed.color, parsed.emotes);
+            addMessage(parsed.username, parsed.message, parsed.color, parsed.emotes, parsed.badges);
           }
         }
       }
@@ -207,7 +253,8 @@
             username: tags['display-name'] || privmsgMatch[1],
             message: privmsgMatch[2],
             color: tags['color'] || null,
-            emotes: tags['emotes'] || ''
+            emotes: tags['emotes'] || '',
+            badges: tags['badges'] || ''
           };
         }
       } catch (e) {
@@ -273,16 +320,29 @@
       }).join('');
     }
 
-    function addMessage(username, text, color, emotes) {
+    // Render badges as HTML
+    function renderBadges(badgesStr) {
+      if (!badgesStr) return '';
+      // Format: "badge1/version,badge2/version"
+      const badgeHtml = badgesStr.split(',').map(badge => {
+        const url = badgeMap.get(badge);
+        if (url) {
+          return `<img class="badge" src="${url}" alt="${badge.split('/')[0]}">`;
+        }
+        return '';
+      }).join('');
+      return badgeHtml ? `<span class="badges">${badgeHtml}</span>` : '';
+    }
+
+    function addMessage(username, text, color, emotes, badges) {
       const messageEl = document.createElement('div');
       messageEl.className = 'chat-message';
 
+      // Badges + Username container
+      const badgesHtml = renderBadges(badges);
       const usernameEl = document.createElement('span');
       usernameEl.className = 'username';
-      usernameEl.textContent = username + ':';
-      if (color) {
-        usernameEl.style.color = color;
-      }
+      usernameEl.innerHTML = badgesHtml + '<span' + (color ? ` style="color:${color}"` : '') + '>' + username + ':</span>';
 
       const textEl = document.createElement('span');
       textEl.className = 'text';
